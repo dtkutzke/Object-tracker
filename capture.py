@@ -19,13 +19,50 @@ image = np.zeros((640,480,3), np.uint8)
 trackedImage = np.zeros((640,480,3), np.uint8)
 imageWidth=imageHeight=0
 
+
+# Borrowed from https://stackoverflow.com/questions/29731726/how-to-calculate-a-gaussian-kernel-matrix-efficiently-in-numpy
+def gkern(l=5, sig=1.):
+    """\
+    creates gaussian kernel with side length `l` and a sigma of `sig`
+    """
+    ax = np.linspace(-(l - 1) / 2., (l - 1) / 2., l)
+    gauss = np.exp(-0.5 * np.square(ax) / np.square(sig))
+    kernel = np.outer(gauss, gauss)
+    return kernel / np.sum(kernel)
+
+
+def calcHistBhattacharyyaCoeff(h1, h2):
+    pass
+
+def calcHistBhattacharyya(h1, h2):
+    # BC = calcHistBhattacharyyaCoeff(h1, h2)
+    # return -np.log(BC)
+    pass
+
+def convolveWithKernel(image):
+    height, width = image.size()
+    kernel = np.zeros([height, width])
+    pass
+
 '''Defines a color model for the target of interest.
    Now, just reading pixel color at location
 '''
 def TuneTracker(x,y):
-    global r,g,b, image, trackedImage
-    trackedImage = image[x-10:x+10, y-14:y+14]
-    #plt.imshow(trackedImage)
+    global r,g,b, image, trackedImage, his, normImage
+    #trackedImage = image[x-500:x+500, y-500:y+500]
+    # Bounding box defined by preset size
+    bndImage = image[y - 15: y + 15, x - 20: x + 20]
+
+    normImage = cv2.normalize(bndImage, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    his = cv2.calcHist([normImage], [0, 1, 2], None, [256, 256, 256], [0, 256, 0, 256, 0, 256])
+    plt.xlabel("Bins")
+    plt.ylabel("Count")
+    plt.xlim([0, 256])
+    plt.plot(his[0])
+
+
+    trackedImage = image
+
     b,g,r = image[y,x]
     sumpixels = float(b)+float(g)+float(r)
     if sumpixels != 0:
@@ -41,31 +78,22 @@ def TuneTracker(x,y):
     Currently this is doing naive color thresholding.
 '''
 def doTracking():
-    global isTracking, image, r,g,b, trackedImage
+    global isTracking, image, r,g,b, trackedImage, normImage, his
     if isTracking:
         print( image.shape )
         imheight, imwidth, implanes = image.shape
-#        f = np.fft.fft2(image)
-#        fshift = np.fft.fftshift(f)
-#        magnitude_spectrum = 20 * np.log(np.abs(fshift))
-#        # Mask the data so that pixels <= 0 are 0
-#        magnitude_spectrum[magnitude_spectrum < 0] = 0
-#        magnitude_spectrum[magnitude_spectrum > 255] = 255
-#        magnitude_spectrum_int = magnitude_spectrum.astype(int)
-#        crow, ccol = imheight // 2, imwidth // 2
-#        # High pass filtering
-#        fshift[crow - 30:crow + 31, ccol - 30:ccol + 31] = 0
-        # Low pass filtering
-        #fshift[0:crow - 30, 0:ccol - 30] = 0
-        #fshift[crow + 31:, ccol + 31:] = 0
-        # f_ishift = np.fft.ifftshift(fshift)
-        # img_back = np.fft.ifft2(f_ishift)
-        # img_back = np.real(img_back)
-        # img_back[img_back < 0] = 0
-        #for f in range(3):
-        #    trackedImage[:,:,f] /= np.amax(trackedImage[:,:,f])
 
-        his = cv2.calcHist([trackedImage], [0, 1, 2], None, [32, 32, 32], [0, 256, 0, 256, 0, 256])
+        # An "interface" to matplotlib.axes.Axes.hist() method
+        #n, bins, patches = plt.hist(x=his[0], bins='auto', color='#0504aa',
+                                    #alpha=0.7, rwidth=0.85)
+        #plt.grid(axis='y', alpha=0.75)
+        #plt.xlabel('Value')
+        #plt.ylabel('Frequency')
+        #plt.title('My Very Own Histogram')
+        #plt.text(23, 45, r'$\mu=15, b=3$')
+        #maxfreq = n.max()
+        # Set a clean upper y-axis limit.
+        #plt.ylim(ymax=np.ceil(maxfreq / 10) * 10 if maxfreq % 10 else maxfreq + 10)
         # Now we convolve the distribution
         #for h in range(3):
         #    plt.plot(his[h])
@@ -77,7 +105,7 @@ def doTracking():
         # plt.title('Magnitude Spectrum'), plt.xticks([]), plt.yticks([])
         # plt.subplot(133), plt.imshow(img_back)
         # plt.title('Result in JET'), plt.xticks([]), plt.yticks([])
-        plt.show()
+        #plt.show()
         for j in range( imwidth ):
             for i in range( imheight ):
                 bb, gg, rr = image[i,j]
