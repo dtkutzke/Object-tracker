@@ -14,18 +14,24 @@ from matplotlib import pyplot as plt
 
 '''global data common to all vision algorithms'''
 isTracking = False
-r=g=b=0.0
+r = g = b = 0.0
 image = np.zeros((640,480,3), np.uint8)
 trackedImage = np.zeros((640,480,3), np.uint8)
-imageWidth=imageHeight=0
+imageHeight, imageWidth, planes = image.shape
+
+'''(Demetri) Global variables for mean shift'''
 regionWidth = 30
 rW = int(regionWidth/2)
 regionHeight = 20
 rH = int(regionHeight/2)
-
 histBinWidth = 256
+xLast = yLast = 0
+eps = 0.01
+
 # One histogram for every RGB value
-his = np.zeros([histBinWidth, histBinWidth, 3])
+hisFeature = np.zeros([histBinWidth, 3])
+#his = np.zeros([histBinWidth])
+pdfOld = np.zeros([regionHeight, regionWidth])
 
 # Borrowed from
 # https://stackoverflow.com/questions/29731726/how-to-calculate-a-gaussian-kernel-matrix-efficiently-in-numpy
@@ -43,14 +49,44 @@ def gaussianKernel(sig=1.0):
 
     return kernel / np.sum(kernel)
 
+'''Create a region of interest ROI around an x,y point'''
+def getRoi(x,y):
+    global image, rH, rW
+    nrows, ncols, nplanes = image.shape
+    if (ncols > x >= 0) and (nrows > y >= 0):
+        return image[y - rH:y + rH, x - rW:x + rW]
 
+
+'''Compute the Bhattacharyya coefficient for two histograms'''
 def calcHistBhattacharyyaCoeff(h1, h2):
-    pass
+    if h1.shape == h2.shape:
+        bins, colors = h1.shape
+        BC = np.zeros([bins, colors])
+        for i in range(bins):
+            for c in range(colors):
+                BC[i, c] = np.sqrt(h1[i, c]*h2[i, c])
 
+        return BC.sum(axis=0)
+    else:
+        return None
+
+
+'''Compute the Bhattacharyya distance between two histograms'''
 def calcHistBhattacharyya(h1, h2):
-    # BC = calcHistBhattacharyyaCoeff(h1, h2)
-    # return -np.log(BC)
-    pass
+    BC = calcHistBhattacharyyaCoeff(h1, h2)
+    if BC is not None:
+        return -np.log(BC)
+    else:
+        return None
+
+'''Hellinger has the advantage of a mapping from reals to [0,1]'''
+def calcHellinger(h1, h2):
+    BC = calcHistBhattacharyyaCoeff(h1, h2)
+    if BC is not None:
+        print("Hellinger", np.sqrt(1 - BC))
+        return np.sqrt(1-BC)
+    else:
+        return None
 
 def convolveWithKernel():
     kernel = gaussianKernel(1)
@@ -60,30 +96,77 @@ def convolveWithKernel():
    Now, just reading pixel color at location
 '''
 def TuneTracker(x,y):
-    global r,g,b, image, trackedImage, his, normImage
+    global r,g,b, image, trackedImage, hisFeature, xLast, yLast, pdfOld
+
+    xLast = x
+    yLast = y
 
     # Bounding box defined by preset size
-    roi = image[y-rH:y+rH, x-rW:x+rW]
+    roi = getRoi(x, y)
 
     # Normalize the image between 0 and 1
-    normImage = cv2.normalize(roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    #normImage = cv2.normalize(roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
 
     # Calculate the histogram
-    his = cv2.calcHist([normImage], [0, 1, 2], None, [256, 256, 256], [0, 256, 0, 256, 0, 256])
+    for i in range(3):
+    #his = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
+        val = cv2.calcHist([roi], [i], None, [histBinWidth], [0, 256])
+        hisFeature[:, i] = val.reshape((256,))
+        hisFeature[:, i] /= hisFeature[:, i].sum()
+        print("Sum of feature histogram ", hisFeature[:, i].sum() )
 
-    # Convolve with kernel. This becomes our target model
-    #his = np.matmul(his[y-regionHeight/2:y+regionHeight, x-regionWidth/2:x+regionWidth/2], gkern(1))
+    pdfOld = mapHistToRoi(roi, hisFeature)
 
-    b,g,r = image[y,x]
-    sumpixels = float(b)+float(g)+float(r)
-    if sumpixels != 0:
-        b = b/sumpixels,
-        r = r/sumpixels
-        g = g/sumpixels
-    print( r,g,b, 'at location ', x,y ) 
+    #plt.plot(his[0])
+    #plt.show()
+    #b,g,r = image[y,x]
+    #sumpixels = float(b)+float(g)+float(r)
+    #if sumpixels != 0:
+    #    b = b/sumpixels,
+    #    r = r/sumpixels
+    #    g = g/sumpixels
+    #print( r,g,b, 'at location ', x,y )
+
+
+def mapHistToRoi(roi_in, hist):
+    roiheight, roiwidth, implanes = roi_in.shape
+
+    # Create a pdf in the new region of interest
+    pdf = np.zeros([roiheight, roiwidth])
+    # Now take the last histogram and compute the pdf over of the new region of interest
+    for j in range(roiwidth):
+        for i in range(roiheight):
+            var = 1
+            for k in range(implanes):
+                var *= hist[roi_in[i, j, k], k]
+
+            pdf[i, j] = var
+
+    #plt.imshow(pdf)
+    #plt.show()
+    print("Map hist to ROI new PDF sum",  pdf.sum())
+    return pdf / pdf.sum()
+    #return pdf / np.amax(pdf)
+
 
 def plotHistogram():
     pass
+
+
+'''Essentially, compute the center of mass of a given pdf and return (x,y)'''
+def computeCenterOfMass(pdf_in):
+    thresh = 0.001
+    height, width = pdf_in.shape
+
+    # Compute the mean of the flattened array
+    m = np.max(pdf_in)
+
+    # Now compute the x and y locations that are closest
+    for i in range(height):
+        for j in range(width):
+            if abs(pdf_in[i, j] - m) < thresh:
+                return j, i
+
 
 ''' Have to update this to perform Sequential Monte Carlo
     tracking, i.e. the particle filter steps.
@@ -91,25 +174,67 @@ def plotHistogram():
     Currently this is doing naive color thresholding.
 '''
 def doTracking():
-    global isTracking, image, r,g,b, trackedImage, normImage, his
+    global isTracking, image, r,g,b, trackedImage, hisFeature, xLast, yLast, pdfOld
     if isTracking:
         print( image.shape )
         imheight, imwidth, implanes = image.shape
 
-        #kernel = gkern()
-        pdf = convolveWithKernel()
+        # Compute the roi
+        newRoi = getRoi(xLast, yLast)
 
-        for j in range( imwidth ):
-            for i in range( imheight ):
-                bb, gg, rr = image[i,j]
-                sumpixels = float(bb)+float(gg)+float(rr)
-                if sumpixels == 0:
-                    sumpixels = 1
-                if rr/sumpixels >= r and gg/sumpixels >= g and bb/sumpixels >= b:
-                    image[i,j] = [255,255,255];
-                else:
-                    image[i,j] = [0,0,0];                    
-    
+        # Compute the pdf from the histogram and region of interest
+        hisNew = np.zeros([histBinWidth, 3])
+        for i in range(3):
+            hisNew[:, i] = cv2.calcHist([newRoi], [i], None, [histBinWidth], [0, 256]).reshape((256,))
+            hisNew[:, i] /= hisNew[:, i].sum()
+
+        pdfNew = mapHistToRoi(newRoi, hisNew)
+
+#        dist = calcHistBhattacharyya(pdfNew, pdfOld)
+        dist = calcHellinger(hisNew, hisFeature)
+
+        while any(dist > eps):
+            xMean, yMean = computeCenterOfMass(pdfNew)
+            xMean, yMean = mapClicksRoiToGlobal(xMean, yMean, xLast+rH, yLast-rW)
+            xLast, yLast = xMean, yMean
+            pdfOld = pdfNew
+            #hisOld = hisNew
+
+            newRoi = getRoi(xLast, yLast)
+
+            # Compute the pdf from the histogram and region of interest
+            hisNew = np.zeros([histBinWidth, 3])
+            for i in range(3):
+                hisNew[:, i] = cv2.calcHist([newRoi], [i], None, [histBinWidth], [0, 256]).reshape((256,))
+                hisNew[:, i] /= hisNew[:, i].sum()
+
+            dist = calcHellinger(hisNew, hisFeature)
+
+            pdfNew = mapHistToRoi(newRoi, hisNew)
+
+
+
+
+        print("New location", xMean, yMean)
+        #xMean = 300
+        #yMean = 300
+
+        cv2.rectangle(image, (xMean-rW, yMean-rH), (xMean + rW, yMean + rH), (255, 0, 0), 2)
+
+#        xLast = xMean
+#        yLast = yMean
+
+        #for j in range( imwidth ):
+        #    for i in range( imheight ):
+        #        bb, gg, rr = image[i,j]
+        #        sumpixels = float(bb)+float(gg)+float(rr)
+        #        if sumpixels == 0:
+        #            sumpixels = 1
+        #        if rr/sumpixels >= r and gg/sumpixels >= g and bb/sumpixels >= b:
+        #            image[i,j] = [255,255,255];
+        #        else:
+        #            image[i,j] = [0,0,0];
+
 
 def clickHandler( event, x,y, flags, param):
     if event == cv2.EVENT_LBUTTONUP:
@@ -117,12 +242,15 @@ def clickHandler( event, x,y, flags, param):
         TuneTracker( x, y )
 
 
+def mapClicksRoiToGlobal(x, y, bottom_x, bottom_y):
+    return x + bottom_x, y + bottom_y
+
 def mapClicks( x, y, curWidth, curHeight ):
     global imageHeight, imageWidth
     imageX = x*imageWidth/curWidth
     imageY = y*imageHeight/curHeight
-    return imageX, imageY
-        
+    return int(imageX), int(imageY)
+
 def captureVideo(src):
     global image, isTracking, trackedImage
     cap = cv2.VideoCapture(src)
@@ -140,9 +268,9 @@ def captureVideo(src):
     if src == 0:
         waitTime = 1
     if cap:
-        print( 'Succesfully set up capture device' ) 
+        print( 'Succesfully set up capture device' )
     else:
-        print( 'Failed to setup capture device' ) 
+        print( 'Failed to setup capture device' )
 
     windowName = 'Input View, press q to quit'
     cv2.namedWindow(windowName)
@@ -152,16 +280,16 @@ def captureVideo(src):
         ret, image = cap.read()
         if ret==False:
             break
-        
+
         # Display the resulting frame
         if isTracking:
             doTracking()
-        cv2.imshow(windowName, image )                                        
+        cv2.imshow(windowName, image )
         inputKey = cv2.waitKey(waitTime) & 0xFF
         if inputKey == ord('q'):
             break
         elif inputKey == ord('t'):
-            isTracking = not isTracking                
+            isTracking = not isTracking
 
     # When everything done, release the capture
     cap.release()
@@ -172,7 +300,7 @@ print( 'Starting program' )
 if __name__ == '__main__':
     arglist = sys.argv
     src = 0
-    print( 'Argument count is ', len(arglist) ) 
+    print( 'Argument count is ', len(arglist) )
     if len(arglist) == 2:
         src = arglist[1]
     else:
@@ -180,4 +308,4 @@ if __name__ == '__main__':
     captureVideo(src)
 else:
     print( 'Not in main' )
-    
+
