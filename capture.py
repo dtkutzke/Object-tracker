@@ -26,12 +26,12 @@ regionHeight = 20
 rH = int(regionHeight/2)
 histBinWidth = 256
 xLast = yLast = 0
-eps = 0.01
+eps = 0.5
 
 # One histogram for every RGB value
 hisFeature = np.zeros([histBinWidth, 3])
 #his = np.zeros([histBinWidth])
-pdfOld = np.zeros([regionHeight, regionWidth])
+pdfFeature = np.zeros([regionHeight, regionWidth])
 
 # Borrowed from
 # https://stackoverflow.com/questions/29731726/how-to-calculate-a-gaussian-kernel-matrix-efficiently-in-numpy
@@ -51,37 +51,36 @@ def gaussianKernel(sig=1.0):
 
 '''Create a region of interest ROI around an x,y point'''
 def getRoi(x,y):
-    global image, rH, rW
-    nrows, ncols, nplanes = image.shape
-    if (ncols > x >= 0) and (nrows > y >= 0):
+    global imageHeight, imageWidth, rH, rW
+    if (imageWidth > x >= 0) and (imageHeight > y >= 0):
         return image[y - rH:y + rH, x - rW:x + rW]
 
 
 '''Compute the Bhattacharyya coefficient for two histograms'''
-def calcHistBhattacharyyaCoeff(h1, h2):
-    if h1.shape == h2.shape:
-        bins, colors = h1.shape
-        BC = np.zeros([bins, colors])
-        for i in range(bins):
-            for c in range(colors):
-                BC[i, c] = np.sqrt(h1[i, c]*h2[i, c])
+def calcBhattacharyyaCoeff(p1, p2):
+    if p1.shape == p2.shape:
+        height, width = p1.shape
+        BC = np.zeros([height, width])
+        for i in range(height):
+            for j in range(width):
+                BC[i, j] = np.sqrt(p1[i, j]*p2[i, j])
 
-        return BC.sum(axis=0)
+        return BC.sum()
     else:
         return None
 
 
 '''Compute the Bhattacharyya distance between two histograms'''
-def calcHistBhattacharyya(h1, h2):
-    BC = calcHistBhattacharyyaCoeff(h1, h2)
+def calcBhattacharyya(p1, p2):
+    BC = calcBhattacharyyaCoeff(p1, p2)
     if BC is not None:
         return -np.log(BC)
     else:
         return None
 
 '''Hellinger has the advantage of a mapping from reals to [0,1]'''
-def calcHellinger(h1, h2):
-    BC = calcHistBhattacharyyaCoeff(h1, h2)
+def calcHellinger(p1, p2):
+    BC = calcBhattacharyyaCoeff(p1, p2)
     if BC is not None:
         print("Hellinger", np.sqrt(1 - BC))
         return np.sqrt(1-BC)
@@ -96,7 +95,7 @@ def convolveWithKernel():
    Now, just reading pixel color at location
 '''
 def TuneTracker(x,y):
-    global r,g,b, image, trackedImage, hisFeature, xLast, yLast, pdfOld
+    global r,g,b, image, trackedImage, hisFeature, pdfFeature, xLast, yLast
 
     xLast = x
     yLast = y
@@ -109,13 +108,11 @@ def TuneTracker(x,y):
 
     # Calculate the histogram
     for i in range(3):
-    #his = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
-        val = cv2.calcHist([roi], [i], None, [histBinWidth], [0, 256])
-        hisFeature[:, i] = val.reshape((256,))
+        hisFeature[:, i] = cv2.calcHist([roi], [i], None, [histBinWidth], [0, 256]).reshape((256,))
         hisFeature[:, i] /= hisFeature[:, i].sum()
-        print("Sum of feature histogram ", hisFeature[:, i].sum() )
+        #print("Sum of feature histogram ", hisFeature[:, i].sum() )
 
-    pdfOld = mapHistToRoi(roi, hisFeature)
+    pdfFeature = mapHistToRoi(roi, hisFeature)
 
     #plt.plot(his[0])
     #plt.show()
@@ -145,6 +142,7 @@ def mapHistToRoi(roi_in, hist):
     #plt.imshow(pdf)
     #plt.show()
     print("Map hist to ROI new PDF sum",  pdf.sum())
+    #return pdf
     return pdf / pdf.sum()
     #return pdf / np.amax(pdf)
 
@@ -160,12 +158,19 @@ def computeCenterOfMass(pdf_in):
 
     # Compute the mean of the flattened array
     m = np.max(pdf_in)
+    #m = np.mean(pdf_in)
+    # Total mass
+    #M = pdf_in.sum()
 
     # Now compute the x and y locations that are closest
     for i in range(height):
         for j in range(width):
             if abs(pdf_in[i, j] - m) < thresh:
                 return j, i
+
+    #xcm = 0
+    #for i in range(height):
+    #    xcm += i*pdf_in[i, ]
 
 
 ''' Have to update this to perform Sequential Monte Carlo
@@ -174,7 +179,7 @@ def computeCenterOfMass(pdf_in):
     Currently this is doing naive color thresholding.
 '''
 def doTracking():
-    global isTracking, image, r,g,b, trackedImage, hisFeature, xLast, yLast, pdfOld
+    global isTracking, image, r,g,b, trackedImage, hisFeature, xLast, yLast, pdfFeature
     if isTracking:
         print( image.shape )
         imheight, imwidth, implanes = image.shape
@@ -190,15 +195,13 @@ def doTracking():
 
         pdfNew = mapHistToRoi(newRoi, hisNew)
 
-#        dist = calcHistBhattacharyya(pdfNew, pdfOld)
-        dist = calcHellinger(hisNew, hisFeature)
+#        dist = calcHistBhattacharyya(pdfNew, pdfFeature)
+        dist = calcHellinger(pdfNew, pdfFeature)
 
-        while any(dist > eps):
+        while dist > eps:
             xMean, yMean = computeCenterOfMass(pdfNew)
             xMean, yMean = mapClicksRoiToGlobal(xMean, yMean, xLast+rH, yLast-rW)
             xLast, yLast = xMean, yMean
-            pdfOld = pdfNew
-            #hisOld = hisNew
 
             newRoi = getRoi(xLast, yLast)
 
@@ -208,18 +211,16 @@ def doTracking():
                 hisNew[:, i] = cv2.calcHist([newRoi], [i], None, [histBinWidth], [0, 256]).reshape((256,))
                 hisNew[:, i] /= hisNew[:, i].sum()
 
-            dist = calcHellinger(hisNew, hisFeature)
-
             pdfNew = mapHistToRoi(newRoi, hisNew)
 
+            dist = calcHellinger(pdfNew, pdfFeature)
 
 
-
-        print("New location", xMean, yMean)
+        print("New location", xLast, yLast)
         #xMean = 300
         #yMean = 300
 
-        cv2.rectangle(image, (xMean-rW, yMean-rH), (xMean + rW, yMean + rH), (255, 0, 0), 2)
+        cv2.rectangle(image, (xLast-rW, yLast-rH), (xLast + rW, yLast + rH), (255, 0, 0), 2)
 
 #        xLast = xMean
 #        yLast = yMean
