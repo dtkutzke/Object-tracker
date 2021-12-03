@@ -19,14 +19,15 @@ trackedImage = np.zeros((640, 480, 3), np.uint8)
 imageHeight, imageWidth, planes = image.shape
 
 '''(Demetri) Global variables for mean shift'''
-regionWidth = 100
+regionWidth = 50
 rW = int(regionWidth / 2)
-regionHeight = 100
+regionHeight = 50
 rH = int(regionHeight / 2)
 histBinWidth = 256
 xLast = yLast = 0
 eps = 0.30
 MAX_ITER = 2
+NEIGHBORHOOD_SIZE = 10
 
 # One histogram for every RGB value
 hisFeature = np.zeros([histBinWidth, 3])
@@ -233,7 +234,7 @@ def plotHistogram():
 
 
 def computeCenterOfMass(pdf_in):
-    thresh = 0.001
+    thresh = 0.0000001
     height, width = pdf_in.shape
 
     # Compute the mean of the flattened array
@@ -304,10 +305,10 @@ def doTracking():
                 if pdf is not None:
                     mostProbableX, mostProbableY = computeCenterOfMass(pdf)
                 else:
-                    mostProbableX, mostProbableY = np.random.randint(rW, imageWidth - rW), np.random.randint(rH,imageHeight - rH)
+                    mostProbableX, mostProbableY = np.random.randint(xLast-rW, xLast+rW), np.random.randint(yLast-rH, yLast+rH)
                 # Local to region of interest
     #            xMean, yMean = computeCenterOfMass(pdfNew)
-                xTest, yTest = generateNewTestPoint(mostProbableX, mostProbableY, 20)
+                xTest, yTest = generateNewTestPoint(mostProbableX, mostProbableY, NEIGHBORHOOD_SIZE)
                 #xTest, yTest = generateNewTestPoint(xLast, yLast)
                 # Remap these values to the global image
                 #xMean, yMean = mapClicksRoiToGlobal(xMean, yMean, xLast - rW, yLast + rH)
