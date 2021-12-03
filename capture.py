@@ -8,6 +8,7 @@ October 2021
 from __future__ import division
 import numpy as np
 import cv2
+print( "** CV2 version **  ", cv2.__version__)
 import sys
 from matplotlib import pyplot as plt
 
@@ -19,37 +20,18 @@ trackedImage = np.zeros((640, 480, 3), np.uint8)
 imageHeight, imageWidth, planes = image.shape
 
 '''(Demetri) Global variables for mean shift'''
-regionWidth = 50
+regionWidth = 30
 rW = int(regionWidth / 2)
-regionHeight = 50
+regionHeight = 20
 rH = int(regionHeight / 2)
 histBinWidth = 256
 xLast = yLast = 0
-eps = 0.30
-MAX_ITER = 2
-NEIGHBORHOOD_SIZE = 10
+eps = 0.10
+MAX_ITER = 5
+NEIGHBORHOOD_SIZE = 20
 
 # One histogram for every RGB value
-hisFeature = np.zeros([histBinWidth, 3])
-#hisFeature = np.zeros([histBinWidth, histBinWidth, histBinWidth])
-# his = np.zeros([histBinWidth])
-pdfFeature = np.zeros([regionHeight, regionWidth])
-
-
-# Borrowed from
-# https://stackoverflow.com/questions/29731726/how-to-calculate-a-gaussian-kernel-matrix-efficiently-in-numpy
-# K(x,y) = exp(-(1/2)*(x^2 + y^2)/sigma^2)
-def gaussianKernel(roi_in, sig=1.0):
-    imheight, imwidth = roi_in.shape
-    center_y = int(imheight / 2)
-    center_x = int(imwidth / 2)
-    kernel = np.zeros((imheight, imwidth))
-    for i in range(imheight):
-        for j in range(imwidth):
-            diff = (i - center_y) ** 2 + (j - center_x) ** 2
-            kernel[i, j] = np.exp(-diff / (2 * sig ** 2))
-
-    return kernel / np.sum(kernel)
+hisFeature = np.zeros([histBinWidth, histBinWidth, histBinWidth])
 
 
 '''Create a region of interest ROI around an x,y point'''
@@ -61,51 +43,10 @@ def getRoi(x, y):
         return None
 
 
-'''Compute the Bhattacharyya coefficient for two histograms'''
-def calcBhattacharyyaCoeff(p1, p2):
-    if p1.shape == p2.shape:
-        bins, channels = p1.shape
-        BC = np.zeros([channels])
-        for c in range(channels):
-            BC[c] = np.dot(np.sqrt(p1[:,c]),np.sqrt(p2[:,c]))
-            if BC[c] > 1:
-                print("BC coefficient bigger than one, somehow!")
-
-
-        #height, width, planes = p1.shape
-        #BC = np.zeros([height, width, planes])
-        #BC = 0
-        #for i in range(height):
-        #    for j in range(width):
-        #        for k in range(planes):
-                    #BC[i, j] = np.sqrt(p1[i, j] * p2[i, j])
-                    #BC[i, j, k] = np.sqrt(np.dot(p1[i, j, k], p2[i, j, k]))
-        #            BC += np.sqrt(p1[i, j, k] * p2[i, j, k])
-
-        #if BC > 1:
-        #    print("BC coefficient bigger than one, somehow!")
-
-        return BC
-    else:
-        return None
-
-
-'''Compute the Bhattacharyya distance between two histograms'''
-
-
-def calcBhattacharyya(p1, p2):
-    BC = calcBhattacharyyaCoeff(p1, p2)
-    if BC is not None:
-        return -np.log(BC)
-    else:
-        return None
-
 
 '''Hellinger has the advantage of a mapping from reals to [0,1]'''
-
-
 def calcHellinger(p1, p2):
-    BC = calcBhattacharyyaCoeff(p1, p2)
+    BC = cv2.compareHist(p1, p2, cv2.HISTCMP_BHATTACHARYYA)
     if BC is not None:
         print("Hellinger", np.sqrt(1 - BC))
         return np.sqrt(1 - BC)
@@ -113,60 +54,25 @@ def calcHellinger(p1, p2):
         return None
 
 
-#def convolveWithKernel(roi_in):
-#    kernel = gaussianKernel(roi_in)
-#    return convolve2D(roi_in, kernel)
-
-# https://medium.com/analytics-vidhya/2d-convolution-using-python-numpy-43442ff5f3810i
-# def convolve2D(image, kernel, padding=0, strides=1):
-#     # Cross Correlation
-#     kernel = np.flipud(np.fliplr(kernel))
-#
-#     # Gather Shapes of Kernel + Image + Padding
-#     xKernShape = kernel.shape[0]
-#     yKernShape = kernel.shape[1]
-#     xImgShape = image.shape[0]
-#     yImgShape = image.shape[1]
-#
-#     # Shape of Output Convolution
-#     xOutput = int(((xImgShape - xKernShape + 2 * padding) / strides) + 1)
-#     yOutput = int(((yImgShape - yKernShape + 2 * padding) / strides) + 1)
-#     output = np.zeros((xOutput, yOutput))
-#
-#     # Apply Equal Padding to All Sides
-#     if padding != 0:
-#         imagePadded = np.zeros((image.shape[0] + padding * 2, image.shape[1] + padding * 2))
-#         imagePadded[int(padding):int(-1 * padding), int(padding):int(-1 * padding)] = image
-#         print(imagePadded)
-#     else:
-#         imagePadded = image
-#
-#     # Iterate through image
-#     for y in range(image.shape[1]):
-#         # Exit Convolution
-#         if y > image.shape[1] - yKernShape:
-#             break
-#         # Only Convolve if y has gone down by the specified Strides
-#         if y % strides == 0:
-#             for x in range(image.shape[0]):
-#                 # Go to next row once kernel is out of bounds
-#                 if x > image.shape[0] - xKernShape:
-#                     break
-#                 try:
-#                     # Only Convolve if x has moved by the specified Strides
-#                     if x % strides == 0:
-#                         output[x, y] = (kernel * imagePadded[x: x + xKernShape, y: y + yKernShape]).sum()
-#                 except:
-#                     break
-#
-#     return output
-
+def convolveWithKernel(roi_in):
+    kernel = np.array([
+        [0, -1, 0],
+        [-1, 5, -1],
+        [0, -1, 0]
+    ])
+    #fig, (ax1, ax2) = plt.subplots(2)
+    #ax1.imshow(cv2.cvtColor(roi_in, cv2.COLOR_BGR2RGB))
+    #ax1.set_title("Non-convolved")
+    #ax2.imshow(cv2.cvtColor(cv2.filter2D(roi_in, -1, kernel), cv2.COLOR_BGR2RGB))
+    #ax2.set_title("Convolved")
+    return cv2.filter2D(roi_in, -1, kernel)
 
 '''Defines a color model for the target of interest.
    Now, just reading pixel color at location
 '''
 def TuneTracker(x, y):
-    global r, g, b, image, trackedImage, hisFeature, pdfFeature, xLast, yLast
+
+    global r, g, b, image, trackedImage, hisFeature, xLast, yLast
 
     xLast = x
     yLast = y
@@ -174,28 +80,12 @@ def TuneTracker(x, y):
     # Bounding box defined by preset size
     roi = getRoi(x, y)
 
-    # Normalize the image between 0 and 1
-    # normImage = cv2.normalize(roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    # Convolve with a kernel
+    roi = convolveWithKernel(roi)
 
-    # Calculate the histogram
-    for i in range(3):
-        hisFeature[:, i] = cv2.calcHist([roi], [i], None, [histBinWidth], [0, 256]).reshape((256,))
-        hisFeature[:, i] /= hisFeature[:, i].sum()
-        # print("Sum of feature histogram ", hisFeature[:, i].sum() )
-    #hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
+    # Compute and normalize the histogram
+    hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
     #hisFeature /= hisFeature.sum()
-
-    #pdfFeature = mapHistToRoi(roi, hisFeature)
-
-    # plt.plot(his[0])
-    # plt.show()
-    # b,g,r = image[y,x]
-    # sumpixels = float(b)+float(g)+float(r)
-    # if sumpixels != 0:
-    #    b = b/sumpixels,
-    #    r = r/sumpixels
-    #    g = g/sumpixels
-    # print( r,g,b, 'at location ', x,y )
 
 
 def mapHistToRoi(roi_in, hist):
@@ -207,60 +97,40 @@ def mapHistToRoi(roi_in, hist):
     # roi_in[1, 1, 1] = some value for green
     for j in range(roiwidth):
         for i in range(roiheight):
-            var = 1
-            for c in range(implanes):
-            #b, g, r = roi_in[i, j]
-                #var = hist[b,g,r]
-                var *= hist[roi_in[i,j,c],c]
+            b, g, r = roi_in[i, j]
+            pdf[i, j] = hist[b, g, r]
 
-            pdf[i, j] = var
-
-    # plt.imshow(pdf)
-    # plt.show()
-    print("Map hist to ROI new PDF sum", pdf.sum())
     # return pdf
     if pdf.sum() != 0:
         return pdf / pdf.sum()
     else:
         return None
-    # return pdf / np.amax(pdf)
-
-
-def plotHistogram():
-    pass
 
 
 '''Essentially, compute the center of mass of a given pdf and return (x,y)'''
-
-
 def computeCenterOfMass(pdf_in):
     thresh = 0.0000001
     height, width = pdf_in.shape
 
     # Compute the mean of the flattened array
     m = np.max(pdf_in)
-    # m = np.mean(pdf_in)
-    # Total mass
-    # M = pdf_in.sum()
 
-    # Now compute the x and y locations that are closest
-    for y in range(height):
-        for x in range(width):
-            if abs(pdf_in[y, x] - m) < thresh:
-                return x, y
+    pdf_flat = pdf_in.flatten('C')
+    pdf_flat = abs(pdf_flat - m)
+    pdf_flat = pdf_flat - thresh
+    idx = np.argmin(pdf_flat)
+    (y, x) = np.unravel_index(idx, (height, width), 'C')
+    return x, y
 
-    # xcm = 0
-    # for i in range(height):
-    #    xcm += i*pdf_in[i, ]
-
-
+'''Generate a new target candidate location'''
 def generateNewTestPoint(x_last, y_last, max_dist):
     global imageHeight, imageWidth, rH, rW, image
-    x_new = np.random.randint(rW, imageWidth - rW)
-    y_new = np.random.randint(rH, imageHeight - rH)
-    while np.linalg.norm(np.array((x_new, y_new)) - np.array((x_last, y_last))) > max_dist:
-        x_new = np.random.randint(rW, imageWidth - rW)
-        y_new = np.random.randint(rH, imageHeight - rH)
+    searchSize = np.max([2*rW,2*rH])
+    x_new = np.random.randint(x_last-searchSize, x_last+searchSize)
+    y_new = np.random.randint(y_last-searchSize, y_last+searchSize)
+    #while np.linalg.norm(np.array((x_new, y_new)) - np.array((x_last, y_last))) > max_dist:
+    #    x_new = np.random.randint(x_last - searchSize, x_last + searchSize)
+    #    y_new = np.random.randint(y_last - searchSize, y_last + searchSize)
 
     return x_new, y_new
 
@@ -273,99 +143,56 @@ def doTracking():
     global isTracking, image, r, g, b, trackedImage, hisFeature, xLast, yLast, pdfFeature
     if isTracking:
         print(image.shape)
-        imheight, imwidth, implanes = image.shape
 
         # Compute the roi
         newRoi = getRoi(xLast, yLast)
+
+
         validRoiUpdate = False
         if newRoi is not None:
             validRoiUpdate = True
 
         if validRoiUpdate:
+            newRoi = convolveWithKernel(newRoi)
             # Compute the pdf from the histogram and region of interest
-            hisNew = np.zeros([histBinWidth, 3])
-            for i in range(3):
-                hisNew[:, i] = cv2.calcHist([newRoi], [i], None, [histBinWidth], [0, 256]).reshape((256,))
-                hisNew[:, i] /= hisNew[:, i].sum()
-            #hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
+            hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
             #hisNew /= hisNew.sum()
-            #pdfNew = mapHistToRoi(newRoi, hisNew)
-
-            #        dist = calcHistBhattacharyya(pdfNew, pdfFeature)
-            #dist = calcHellinger(pdfNew, pdfFeature)
 
             dist = calcHellinger(hisNew, hisFeature)
-
-
+            mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, NEIGHBORHOOD_SIZE)
 
             it = 0
-            while all(dist > eps) and it < MAX_ITER:
-
-                pdf = mapHistToRoi(image, hisFeature)
-                if pdf is not None:
-                    mostProbableX, mostProbableY = computeCenterOfMass(pdf)
-                else:
-                    mostProbableX, mostProbableY = np.random.randint(xLast-rW, xLast+rW), np.random.randint(yLast-rH, yLast+rH)
-                # Local to region of interest
-    #            xMean, yMean = computeCenterOfMass(pdfNew)
-                xTest, yTest = generateNewTestPoint(mostProbableX, mostProbableY, NEIGHBORHOOD_SIZE)
-                #xTest, yTest = generateNewTestPoint(xLast, yLast)
-                # Remap these values to the global image
-                #xMean, yMean = mapClicksRoiToGlobal(xMean, yMean, xLast - rW, yLast + rH)
-
-
+            while dist > eps and it < MAX_ITER:
+                xTest, yTest = mostProbableX, mostProbableY
 
                 # Compute the new region of interest over the global coordinates
                 newRoi = getRoi(xTest, yTest)
 
+
                 validRoiUpdate = False
                 if newRoi is not None:
                     validRoiUpdate = True
+
                     # Update xLast and yLast to reflect the new global mean coordinates
                     xLast, yLast = xTest, yTest
 
                 if validRoiUpdate:
+                    newRoi = convolveWithKernel(newRoi)
                     # Compute the pdf from the histogram and region of interest
-                    for i in range(3):
-                        hisNew[:, i] = cv2.calcHist([newRoi], [i], None, [histBinWidth], [0, 256]).reshape((256,))
-                        if hisNew[:, i].sum() != 0:
-                            hisNew[:, i] /= hisNew[:, i].sum()
-                        else:
-                            print(" * ERROR * Problem in normalization")
-
-                #hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
-                #                          [0, 256, 0, 256, 0, 256])
-                #if hisNew.sum() != 0:
-                #    hisNew /= hisNew.sum()
-                #else:
-                #    print(" * ERROR * Problem in normalization")
-
-                    #pdfNew = mapHistToRoi(newRoi, hisNew)
+                    hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
+                                          [0, 256, 0, 256, 0, 256])
+                    #if hisNew.sum() != 0:
+                    #    hisNew /= hisNew.sum()
+                    #else:
+                    #    print(" * ERROR * Problem in normalization")
 
                     dist = calcHellinger(hisNew, hisFeature)
                     print("Iteration count = ", it)
                     it += 1
 
         print("New location", xLast, yLast)
-        # xMean = 300
-        # yMean = 300
 
         cv2.rectangle(image, (xLast - rW, yLast - rH), (xLast + rW, yLast + rH), (255, 0, 0), 2)
-
-
-#        xLast = xMean
-#        yLast = yMean
-
-# for j in range( imwidth ):
-#    for i in range( imheight ):
-#        bb, gg, rr = image[i,j]
-#        sumpixels = float(bb)+float(gg)+float(rr)
-#        if sumpixels == 0:
-#            sumpixels = 1
-#        if rr/sumpixels >= r and gg/sumpixels >= g and bb/sumpixels >= b:
-#            image[i,j] = [255,255,255];
-#        else:
-#            image[i,j] = [0,0,0];
 
 
 def clickHandler(event, x, y, flags, param):
