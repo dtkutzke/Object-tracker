@@ -20,15 +20,17 @@ trackedImage = np.zeros((640, 480, 3), np.uint8)
 imageHeight, imageWidth, planes = image.shape
 
 '''(Demetri) Global variables for mean shift'''
-regionWidth = 30
+regionWidth = 60
 rW = int(regionWidth / 2)
-regionHeight = 20
+regionHeight = 60
 rH = int(regionHeight / 2)
-histBinWidth = 256
+histBinWidth = 1
 xLast = yLast = 0
-eps = 0.10
-MAX_ITER = 5
-NEIGHBORHOOD_SIZE = 20
+eps = 0.5
+#eps = 0.5
+maxItr = 10
+nbrSize = np.min([rW, rH])
+
 
 # One histogram for every RGB value
 hisFeature = np.zeros([histBinWidth, histBinWidth, histBinWidth])
@@ -38,7 +40,8 @@ hisFeature = np.zeros([histBinWidth, histBinWidth, histBinWidth])
 def getRoi(x, y):
     global imageHeight, imageWidth, rH, rW, image
     if (rW <= x < imageWidth - rW) and (rH <= y < imageHeight - rH):
-        return image[y - rH:y + rH, x - rW:x + rW]
+        roi = image[y - rH:y + rH, x - rW:x + rW]
+        return cv2.normalize(roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     else:
         return None
 
@@ -47,25 +50,32 @@ def getRoi(x, y):
 '''Hellinger has the advantage of a mapping from reals to [0,1]'''
 def calcHellinger(p1, p2):
     BC = cv2.compareHist(p1, p2, cv2.HISTCMP_BHATTACHARYYA)
-    if BC is not None:
-        print("Hellinger", np.sqrt(1 - BC))
-        return np.sqrt(1 - BC)
-    else:
-        return None
-
+    print("Hellinger: ", BC)
+    return BC
+    #if BC is not None:
+    #    print("Hellinger", np.sqrt(1 - BC))
+    #    return np.sqrt(1 - BC)
+    #else:
+    #    return None
 
 def convolveWithKernel(roi_in):
     kernel = np.array([
-        [0, -1, 0],
-        [-1, 5, -1],
-        [0, -1, 0]
+        [0, 1, 0],
+        [1, 1, 1],
+        [0, 1, 0]
     ])
+    flipCode = 0
+    anchorx = -1
+    anchory = -1
+    rows, cols = kernel.shape
+    anchor = (cols - anchorx - 1, rows - anchory - 1)
+    #kernel = cv2.flip(kernel, flipCode)
     #fig, (ax1, ax2) = plt.subplots(2)
     #ax1.imshow(cv2.cvtColor(roi_in, cv2.COLOR_BGR2RGB))
     #ax1.set_title("Non-convolved")
     #ax2.imshow(cv2.cvtColor(cv2.filter2D(roi_in, -1, kernel), cv2.COLOR_BGR2RGB))
     #ax2.set_title("Convolved")
-    return cv2.filter2D(roi_in, -1, kernel)
+    return cv2.filter2D(roi_in, -1, kernel, None, anchor)
 
 '''Defines a color model for the target of interest.
    Now, just reading pixel color at location
@@ -84,7 +94,7 @@ def TuneTracker(x, y):
     roi = convolveWithKernel(roi)
 
     # Compute and normalize the histogram
-    hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
+    hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 1, 0, 1, 0, 1])
     #hisFeature /= hisFeature.sum()
 
 
@@ -107,30 +117,40 @@ def mapHistToRoi(roi_in, hist):
         return None
 
 
-'''Essentially, compute the center of mass of a given pdf and return (x,y)'''
-def computeCenterOfMass(pdf_in):
+'''Essentially, compute the center of mass of a given pdf and return (x, y, z)'''
+def computeCenterOfMass(hist_in):
     thresh = 0.0000001
-    height, width = pdf_in.shape
+    nB, nG, nR = hist_in.shape
+
+    hist_flat = hist_in.flatten('C')
 
     # Compute the mean of the flattened array
-    m = np.max(pdf_in)
+    m = np.mean(hist_flat)
 
-    pdf_flat = pdf_in.flatten('C')
-    pdf_flat = abs(pdf_flat - m)
-    pdf_flat = pdf_flat - thresh
-    idx = np.argmin(pdf_flat)
-    (y, x) = np.unravel_index(idx, (height, width), 'C')
-    return x, y
+    hist_flat = abs(hist_flat - m)
+    hist_flat = hist_flat - thresh
+    idx = np.argmin(hist_flat)
+    (b, g, r) = np.unravel_index(idx, (nB, nG, nR), 'C')
+    return b, g, r
+
+def getClosestIndexToValue(roi_in, b_in, g_in, r_in):
+    height, width, planes = roi_in.shape
+    # Flatten the input ROI to be (height*width) x 3
+    roi_in_flat = np.reshape(roi_in, (height*width, planes), order='C')
+    for i in range(height*width):
+        if all(roi_in_flat[i] == b_in, g_in, r_in):
+            return np.unravel_index(i, (height, width), 'C')
 
 '''Generate a new target candidate location'''
 def generateNewTestPoint(x_last, y_last, max_dist):
     global imageHeight, imageWidth, rH, rW, image
-    searchSize = np.max([2*rW,2*rH])
-    x_new = np.random.randint(x_last-searchSize, x_last+searchSize)
-    y_new = np.random.randint(y_last-searchSize, y_last+searchSize)
-    #while np.linalg.norm(np.array((x_new, y_new)) - np.array((x_last, y_last))) > max_dist:
-    #    x_new = np.random.randint(x_last - searchSize, x_last + searchSize)
-    #    y_new = np.random.randint(y_last - searchSize, y_last + searchSize)
+    y_new = np.random.randint(rH, imageHeight - rH)
+    x_new = np.random.randint(rW, imageWidth-rW)
+    while np.linalg.norm(np.array((x_new, y_new)) - np.array((x_last, y_last))) > max_dist:
+        #x_new = np.random.randint(x_last - searchSize, x_last + searchSize)
+        y_new = np.random.randint(rH, imageHeight - rH)
+        x_new = np.random.randint(rW, imageWidth - rW)
+        #y_new = np.random.randint(y_last - searchSize, y_last + searchSize)
 
     return x_new, y_new
 
@@ -155,14 +175,14 @@ def doTracking():
         if validRoiUpdate:
             newRoi = convolveWithKernel(newRoi)
             # Compute the pdf from the histogram and region of interest
-            hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 256, 0, 256, 0, 256])
+            hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 1, 0, 1, 0, 1])
             #hisNew /= hisNew.sum()
 
             dist = calcHellinger(hisNew, hisFeature)
-            mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, NEIGHBORHOOD_SIZE)
-
+            mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, nbrSize)
+            dist_prev = dist
             it = 0
-            while dist > eps and it < MAX_ITER:
+            while dist > eps and it < maxItr:
                 xTest, yTest = mostProbableX, mostProbableY
 
                 # Compute the new region of interest over the global coordinates
@@ -173,22 +193,27 @@ def doTracking():
                 if newRoi is not None:
                     validRoiUpdate = True
 
-                    # Update xLast and yLast to reflect the new global mean coordinates
-                    xLast, yLast = xTest, yTest
-
                 if validRoiUpdate:
                     newRoi = convolveWithKernel(newRoi)
                     # Compute the pdf from the histogram and region of interest
                     hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
-                                          [0, 256, 0, 256, 0, 256])
+                                          [0, 1, 0, 1, 0, 1])
                     #if hisNew.sum() != 0:
                     #    hisNew /= hisNew.sum()
                     #else:
                     #    print(" * ERROR * Problem in normalization")
 
                     dist = calcHellinger(hisNew, hisFeature)
+                    if dist < dist_prev:
+                        # Update xLast and yLast to reflect the new global mean coordinates
+                        xLast, yLast = xTest, yTest
+                        dist_prev = dist
+
+                    mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, nbrSize)
                     print("Iteration count = ", it)
                     it += 1
+                else:
+                    mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, nbrSize)
 
         print("New location", xLast, yLast)
 
