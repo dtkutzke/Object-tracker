@@ -23,7 +23,7 @@ imageHeight, imageWidth, planes = image.shape
 
 '''(Demetri) Global variables for mean shift'''
 dataDir = './Data'
-dataString = 'track_run_'
+dataString = 'tracker_run'
 saveData = True
 frameRate = 0
 # How many seconds we want to save data (e.g., every 5 s)
@@ -31,15 +31,15 @@ outputF = 5
 
 frameCount = 0
 
-regionWidth = 30
+regionWidth = 60
 rW = int(regionWidth / 2)
-regionHeight = 30
+regionHeight = 60
 rH = int(regionHeight / 2)
 histBinWidth = 20
 histMin = 0
 histMax = 1
 xLast = yLast = 0
-eps = 0.6
+eps = 0.5
 #eps = 0.5
 maxItr = 4
 nbrSize = np.min([rW, rH])
@@ -49,6 +49,10 @@ nbrSize = np.min([rW, rH])
 # One histogram for every RGB value
 hisFeature = np.zeros([histBinWidth, histBinWidth, histBinWidth])
 
+# Histogram array
+hisFeatureList = []
+hisFileLabelList = []
+hellingerDistList = []
 
 '''Create a region of interest ROI around an x,y point'''
 def getRoi(x, y):
@@ -104,13 +108,32 @@ def TuneTracker(x, y):
 
     # Bounding box defined by preset size
     roi = getRoi(x, y)
+    plt.imshow(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+    plt.savefig(dataDir+"/"+dataString+"_featureROI.png")
 
     # Convolve with a kernel
     roi = convolveWithKernel(roi)
 
     # Compute and normalize the histogram
     hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [histMin, histMax, histMin, histMax, histMin, histMax])
-    #hisFeature /= hisFeature.sum()
+
+    b, g, r = np.unravel_index(np.argmax(hisFeature.flatten()), (histBinWidth, histBinWidth, histBinWidth))
+    print("Max pixel bin for ", histBinWidth, "(", b, g, r, ")")
+
+
+
+def saveConfigDetails():
+    with open(dataDir+"/"+dataString+"_config.txt", 'a', encoding='utf-8') as f:
+        f.write("*** CONFIGURATION FILE *** "+dataString+"\n")
+        f.write("Roi width: " + str(regionWidth)+"\n")
+        f.write("Roi height: " + str(regionHeight)+"\n")
+        f.write("Histogram bin width: " + str(histBinWidth)+"\n")
+        f.write("Histogram min/max: " + str(histMin)+","+str(histMax)+"\n")
+        f.write("Tracker similarity threshold: " + str(eps)+"\n")
+        f.write("Tracker maximum iterations to converge: " + str(maxItr)+"\n")
+        f.write("Maximum neighborhood search size: " + str(nbrSize)+"\n")
+        f.write("Maximum pixel bin frequency index (bgr): (" +str(b)+","+str(g)+","+str(r)+")\n")
+        f.write("Figure output boolean: " + str(saveData)+"\n")
 
 
 def mapHistToRoi(roi_in, hist):
@@ -169,19 +192,75 @@ def generateNewTestPoint(x_last, y_last, max_dist):
 
     return x_new, y_new
 
-def plotAndSaveHistogram(h1, h2=None, fig_name=None):
-    fig, ax = plt.subplots(3)
+def plotAndSaveHistogram(h1, h2=None, fig_name=None, h_dist=None):
+    global b, g, r
+    fig = plt.figure(figsize=(10, 4))
+    ax1 = fig.add_subplot(131, projection='3d')
+    ax2 = fig.add_subplot(132, projection='3d')
+    ax3 = fig.add_subplot(133, projection='3d')
+    axList = [ax1, ax2, ax3]
+
+    if fig_name is not None and h_dist is not None:
+        fig.suptitle(fig_name+"\nHellinger: "+str(h_dist))
+
+    xx = np.linspace(histMin, histMax, histBinWidth)
+    xpos, ypos = np.meshgrid(xx, xx)
+    xpos = xpos.ravel()
+    ypos = ypos.ravel()
+    zpos = 0
+
+    colors = ['b', 'g', 'r']
+    sliceName = ["GR", "BR", "BG"]
+    # Construct arrays with the dimensions for the 16 bars.
+    dx = dy = 0.5 * np.ones_like(zpos)
+    #for i in range(3):
+    ## ============= GR SLICE
+    dz = h1[b,:,:].ravel()
+    clrs1 = [colors[0]]*len(dz)
+    ww = histMax/histBinWidth
+    axList[0].bar3d(xpos, ypos, np.zeros_like(h1[b,:,:].ravel()), ww, ww, h1[b,:,:].ravel(), shade=False, color=clrs1, edgecolor='k')
+    proxy1 = plt.Rectangle((0, 0), 1, 1, fc=colors[0])
+    if h2 is not None:
+        axList[0].bar3d(xpos, ypos, np.zeros_like(h2[b,:,:].ravel()), ww, ww, h2[b,:,:].ravel(), shade=False, alpha=0.40, color=clrs1, edgecolor='k')
+        proxy2 = plt.Rectangle((0, 0), 1, 1, fc=colors[0], alpha=0.40)
+
+    axList[0].set_title(sliceName[0])
+    axList[0].set_xlim(histMin, histMax)
+    axList[0].legend([proxy1,proxy2],['Feature','Candidate'])
+
+    ## ============= BR SLICE
+    dz = h1[:,g,:].ravel()
+    clrs1 = [colors[1]]*len(dz)
+    axList[1].bar3d(xpos, ypos, np.zeros_like(h1[:,g,:].ravel()), ww, ww, h1[:,g,:].ravel(), shade=False, color=clrs1, edgecolor='k')
+    proxy1 = plt.Rectangle((0, 0), 1, 1, fc=colors[1])
+    if h2 is not None:
+        axList[1].bar3d(xpos, ypos, np.zeros_like(h2[:,g,:].ravel()), ww, ww, h2[:,g,:].ravel(), shade=False, alpha=0.40, color=clrs1, edgecolor='k' )
+        proxy2 = plt.Rectangle((0, 0), 1, 1, fc=colors[1], alpha=0.40)
+
+    axList[1].set_title(sliceName[1])
+    axList[1].set_xlim(histMin, histMax)
+    axList[1].legend([proxy1,proxy2],['Feature','Candidate'])
+
+    ## ============= GR SLICE
+    dz = h1[:,:,r].ravel()
+    clrs1 = [colors[2]]*len(dz)
+    axList[2].bar3d(xpos, ypos, np.zeros_like(h1[:,:,r].ravel()), ww, ww, h1[:,:,r].ravel(), shade=False, color=clrs1, edgecolor='k')
+    proxy1 = plt.Rectangle((0, 0), 1, 1, fc=colors[2])
+    if h2 is not None:
+        axList[2].bar3d(xpos, ypos, np.zeros_like(h2[:,:,r].ravel()), ww, ww, h2[:,:,r].ravel(), shade=False, alpha=0.40, color=clrs1, edgecolor='k')
+        proxy2 = plt.Rectangle((0, 0), 1, 1, fc=colors[2], alpha=0.40)
+
+    axList[2].set_title(sliceName[2])
+    axList[2].set_xlim(histMin, histMax)
+    axList[2].legend([proxy1,proxy2],['Feature','Candidate'])
+    #plt.show()
+
     if fig_name is not None:
-        fig.suptitle(fig_name)
+        plt.savefig(dataDir + "/" + fig_name+"_histograms.png")
+    else:
+        plt.savefig("Fig.png")
 
-    colors = {'blue', 'green', 'red'}
-    linstyle = {'-', '--'}
-    for i in range(3):
-        ax[i].plot(h1[i], color=colors[i], linestyle=linstyle[0], linewidth=2)
-        if h2 is not None:
-           ax[i].plot(h2[i], colors=colors[i], linestyle=linstyle[1], linewidth=2)
-
-    print("Look at those plots!")
+    #print("Look at those plots!")
 
 
 ''' Have to update this to perform Sequential Monte Carlo
@@ -209,13 +288,22 @@ def doTracking():
             hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
                                       [histMin, histMax, histMin, histMax, histMin, histMax])
 
-            if saveData:
-                if frameRate * outputF == frameCount:
-                    print("====== Saving data now ======")
+
 
             #hisNew /= hisNew.sum()
 
             dist = calcHellinger(hisNew, hisFeature)
+
+            if saveData:
+                runName = "_Frame" + str(frameCount) + "_Iter0"
+                dataFileName = dataString + runName
+                if np.remainder(frameCount, frameRate * outputF) == 0:
+                    #plotAndSaveHistogram(hisFeature, hisNew, dataFileName)
+                    hisFeatureList.append(hisNew)
+                    hisFileLabelList.append(dataFileName)
+                    hellingerDistList.append(dist)
+                    # print("====== Saving data now ======")
+
             mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, nbrSize)
             dist_prev = dist
             it = 0
@@ -246,6 +334,15 @@ def doTracking():
                         xLast, yLast = xTest, yTest
                         dist_prev = dist
 
+                    if saveData:
+                        runName = "_Frame" + str(frameCount) + "_Iter" + str(it+1)
+                        dataFileName = dataString + runName
+                        if np.remainder(frameCount, frameRate * outputF) == 0:
+                           # plotAndSaveHistogram(hisFeature, hisNew, dataFileName)
+                            hisFeatureList.append(hisNew)
+                            hisFileLabelList.append(dataFileName)
+                            hellingerDistList.append(dist)
+
                     mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, nbrSize)
                     print("Iteration count = ", it)
                     it += 1
@@ -255,6 +352,11 @@ def doTracking():
         #print("New location", xLast, yLast)
 
         cv2.rectangle(image, (xLast - rW, yLast - rH), (xLast + rW, yLast + rH), (255, 0, 0), 2)
+
+
+def performCleanup():
+    for h, f, d in zip(hisFeatureList, hisFileLabelList, hellingerDistList):
+        plotAndSaveHistogram(hisFeature, h, f, d)
 
 
 def clickHandler(event, x, y, flags, param):
@@ -270,7 +372,7 @@ def getDataRunCount():
         if onlyfiles:
             last_file = onlyfiles[-1]
             if last_file.find(dataString) == 0:
-                return last_file[len(dataString)] + 1
+                return int(last_file[len(dataString)]) + 1
         else:
             return 1
     else:
@@ -328,6 +430,10 @@ def captureVideo(src):
         cv2.imshow(windowName, image)
         inputKey = cv2.waitKey(waitTime) & 0xFF
         if inputKey == ord('q'):
+            print("Quitting program and saving all plots")
+            if saveData:
+                performCleanup()
+
             break
         elif inputKey == ord('t'):
             isTracking = not isTracking
@@ -349,6 +455,7 @@ if __name__ == '__main__':
 
     if saveData:
         runCount = getDataRunCount()
+        dataString += str(runCount)
 
     captureVideo(src)
 else:
