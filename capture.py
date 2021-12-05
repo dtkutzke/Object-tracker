@@ -8,6 +8,8 @@ October 2021
 from __future__ import division
 import numpy as np
 import cv2
+import os.path
+import os
 print( "** CV2 version **  ", cv2.__version__)
 import sys
 from matplotlib import pyplot as plt
@@ -20,16 +22,28 @@ trackedImage = np.zeros((640, 480, 3), np.uint8)
 imageHeight, imageWidth, planes = image.shape
 
 '''(Demetri) Global variables for mean shift'''
-regionWidth = 60
+dataDir = './Data'
+dataString = 'track_run_'
+saveData = True
+frameRate = 0
+# How many seconds we want to save data (e.g., every 5 s)
+outputF = 5
+
+frameCount = 0
+
+regionWidth = 30
 rW = int(regionWidth / 2)
-regionHeight = 60
+regionHeight = 30
 rH = int(regionHeight / 2)
-histBinWidth = 1
+histBinWidth = 20
+histMin = 0
+histMax = 1
 xLast = yLast = 0
-eps = 0.5
+eps = 0.6
 #eps = 0.5
-maxItr = 10
+maxItr = 4
 nbrSize = np.min([rW, rH])
+
 
 
 # One histogram for every RGB value
@@ -42,6 +56,7 @@ def getRoi(x, y):
     if (rW <= x < imageWidth - rW) and (rH <= y < imageHeight - rH):
         roi = image[y - rH:y + rH, x - rW:x + rW]
         return cv2.normalize(roi, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        #return roi
     else:
         return None
 
@@ -60,16 +75,16 @@ def calcHellinger(p1, p2):
 
 def convolveWithKernel(roi_in):
     kernel = np.array([
-        [0, 1, 0],
-        [1, 1, 1],
-        [0, 1, 0]
+        [0, -1, 0],
+        [-1, 5, -1],
+        [0, -1, 0]
     ])
     flipCode = 0
-    anchorx = -1
-    anchory = -1
+    anchorx = 0
+    anchory = 0
     rows, cols = kernel.shape
     anchor = (cols - anchorx - 1, rows - anchory - 1)
-    #kernel = cv2.flip(kernel, flipCode)
+    kernel = cv2.flip(kernel, flipCode)
     #fig, (ax1, ax2) = plt.subplots(2)
     #ax1.imshow(cv2.cvtColor(roi_in, cv2.COLOR_BGR2RGB))
     #ax1.set_title("Non-convolved")
@@ -94,7 +109,7 @@ def TuneTracker(x, y):
     roi = convolveWithKernel(roi)
 
     # Compute and normalize the histogram
-    hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 1, 0, 1, 0, 1])
+    hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [histMin, histMax, histMin, histMax, histMin, histMax])
     #hisFeature /= hisFeature.sum()
 
 
@@ -154,19 +169,35 @@ def generateNewTestPoint(x_last, y_last, max_dist):
 
     return x_new, y_new
 
+def plotAndSaveHistogram(h1, h2=None, fig_name=None):
+    fig, ax = plt.subplots(3)
+    if fig_name is not None:
+        fig.suptitle(fig_name)
+
+    colors = {'blue', 'green', 'red'}
+    linstyle = {'-', '--'}
+    for i in range(3):
+        ax[i].plot(h1[i], color=colors[i], linestyle=linstyle[0], linewidth=2)
+        if h2 is not None:
+           ax[i].plot(h2[i], colors=colors[i], linestyle=linstyle[1], linewidth=2)
+
+    print("Look at those plots!")
+
+
 ''' Have to update this to perform Sequential Monte Carlo
     tracking, i.e. the particle filter steps.
 
     Currently this is doing naive color thresholding.
 '''
 def doTracking():
-    global isTracking, image, r, g, b, trackedImage, hisFeature, xLast, yLast, pdfFeature
+    global isTracking, image, r, g, b, trackedImage, hisFeature, xLast, yLast, frameCount, frameRate, outputF
     if isTracking:
+        frameCount += 1
+        print(" ** Frame count: ", frameCount)
         print(image.shape)
 
         # Compute the roi
         newRoi = getRoi(xLast, yLast)
-
 
         validRoiUpdate = False
         if newRoi is not None:
@@ -175,7 +206,13 @@ def doTracking():
         if validRoiUpdate:
             newRoi = convolveWithKernel(newRoi)
             # Compute the pdf from the histogram and region of interest
-            hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [0, 1, 0, 1, 0, 1])
+            hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
+                                      [histMin, histMax, histMin, histMax, histMin, histMax])
+
+            if saveData:
+                if frameRate * outputF == frameCount:
+                    print("====== Saving data now ======")
+
             #hisNew /= hisNew.sum()
 
             dist = calcHellinger(hisNew, hisFeature)
@@ -197,7 +234,7 @@ def doTracking():
                     newRoi = convolveWithKernel(newRoi)
                     # Compute the pdf from the histogram and region of interest
                     hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
-                                          [0, 1, 0, 1, 0, 1])
+                                          [histMin, histMax, histMin, histMax, histMin, histMax])
                     #if hisNew.sum() != 0:
                     #    hisNew /= hisNew.sum()
                     #else:
@@ -215,7 +252,7 @@ def doTracking():
                 else:
                     mostProbableX, mostProbableY = generateNewTestPoint(xLast, yLast, nbrSize)
 
-        print("New location", xLast, yLast)
+        #print("New location", xLast, yLast)
 
         cv2.rectangle(image, (xLast - rW, yLast - rH), (xLast + rW, yLast + rH), (255, 0, 0), 2)
 
@@ -224,6 +261,23 @@ def clickHandler(event, x, y, flags, param):
     if event == cv2.EVENT_LBUTTONUP:
         print('left button released')
         TuneTracker(x, y)
+
+
+def getDataRunCount():
+    if os.path.isdir(dataDir):
+        # Load the files, extract iter from last file
+        onlyfiles = [f for f in os.listdir(dataDir) if os.path.isfile(os.path.join(dataDir, f))]
+        if onlyfiles:
+            last_file = onlyfiles[-1]
+            if last_file.find(dataString) == 0:
+                return last_file[len(dataString)] + 1
+        else:
+            return 1
+    else:
+        print("Creating data directory to save results")
+        os.mkdir(dataDir)
+        return 1
+
 
 
 def mapClicksRoiToGlobal(x, y, bottom_x, bottom_y):
@@ -238,7 +292,7 @@ def mapClicks(x, y, curWidth, curHeight):
 
 
 def captureVideo(src):
-    global image, isTracking, trackedImage
+    global image, isTracking, trackedImage, frameRate
     cap = cv2.VideoCapture(src)
     if cap.isOpened() and src == '0':
         ret = cap.set(3, 640) and cap.set(4, 480)
@@ -247,6 +301,7 @@ def captureVideo(src):
             return
     else:
         frate = cap.get(cv2.CAP_PROP_FPS)
+        frameRate = frate
         print(frate, ' is the framerate')
         waitTime = int(1000 / frate)
 
@@ -291,6 +346,10 @@ if __name__ == '__main__':
         src = arglist[1]
     else:
         src = 0
+
+    if saveData:
+        runCount = getDataRunCount()
+
     captureVideo(src)
 else:
     print('Not in main')
