@@ -322,7 +322,7 @@ def PlotAndSaveHistogram(h1, h2=None, fig_name=None, h_dist=None):
     Currently this is doing naive color thresholding.
 '''
 def doTracking():
-    global isTracking, image, r, g, b, trackedImage, hisFeature, xLast, yLast, frameCount, frameRate, outputF
+    global isTracking, image, r, g, b, trackedImage, hisFeature, xLast, yLast, frameCount, frameRate, outputF, saveData
     if isTracking:
         frameCount += 1
         print(" ** Frame count: ", frameCount)
@@ -349,7 +349,7 @@ def doTracking():
             if saveData:
                 runName = "_Frame" + str(frameCount) + "_Iter0"
                 dataFileName = dataString + runName
-                if np.remainder(frameCount, frameRate * outputF) == 0:
+                if np.remainder(frameCount, np.ceil(frameRate) * outputF) == 0:
                     hisFeatureList.append(hisNew)
                     hisFileLabelList.append(dataFileName)
                     hellingerDistList.append(dist)
@@ -390,7 +390,7 @@ def doTracking():
                     if saveData:
                         runName = "_Frame" + str(frameCount) + "_Iter" + str(it+1)
                         dataFileName = dataString + runName
-                        if np.remainder(frameCount, frameRate * outputF) == 0:
+                        if np.remainder(frameCount, np.ceil(frameRate) * outputF) == 0:
                             hisFeatureList.append(hisNew)
                             hisFileLabelList.append(dataFileName)
                             hellingerDistList.append(dist)
