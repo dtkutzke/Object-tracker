@@ -133,11 +133,13 @@ def TuneTracker(x, y):
     # Bounding box defined by preset size
     roi = GetRoi(x, y)
     roiFeature = np.copy(roi)
-    roi = Normalize(roi)
+
 
     # Convolve with a kernel
     roi = ConvolveWithKernel(roi)
     roiConvolved = np.copy(roi)
+
+    roi = Normalize(roi)
 
     # Compute and normalize the histogram
     hisFeature = cv2.calcHist([roi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth], [histMin, histMax, histMin, histMax, histMin, histMax])
@@ -328,7 +330,7 @@ def doTracking():
 
         # Compute the roi
         newRoi = GetRoi(xLast, yLast)
-        newRoi = Normalize(newRoi)
+
 
         validRoiUpdate = False
         if newRoi is not None:
@@ -336,6 +338,8 @@ def doTracking():
 
         if validRoiUpdate:
             newRoi = ConvolveWithKernel(newRoi)
+            cNewRoi = np.copy(newRoi)
+            newRoi = Normalize(newRoi)
             # Compute the pdf from the histogram and region of interest
             hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
                                       [histMin, histMax, histMin, histMax, histMin, histMax])
@@ -349,7 +353,7 @@ def doTracking():
                     hisFeatureList.append(hisNew)
                     hisFileLabelList.append(dataFileName)
                     hellingerDistList.append(dist)
-                    candidateRoi.append(newRoi)
+                    candidateRoi.append(cNewRoi)
 
             mostProbableX, mostProbableY = GenerateNewTestPoint(xLast, yLast, nbrSize)
             dist_prev = dist
@@ -359,7 +363,7 @@ def doTracking():
 
                 # Compute the new region of interest over the global coordinates
                 newRoi = GetRoi(xTest, yTest)
-                newRoi = Normalize(newRoi)
+
 
                 validRoiUpdate = False
                 if newRoi is not None:
@@ -367,6 +371,8 @@ def doTracking():
 
                 if validRoiUpdate:
                     newRoi = ConvolveWithKernel(newRoi)
+                    cNewRoi = np.copy(newRoi)
+                    newRoi = Normalize(newRoi)
                     # Compute the pdf from the histogram and region of interest
                     hisNew = cv2.calcHist([newRoi], [0, 1, 2], None, [histBinWidth, histBinWidth, histBinWidth],
                                           [histMin, histMax, histMin, histMax, histMin, histMax])
@@ -388,7 +394,7 @@ def doTracking():
                             hisFeatureList.append(hisNew)
                             hisFileLabelList.append(dataFileName)
                             hellingerDistList.append(dist)
-                            candidateRoi.append(newRoi)
+                            candidateRoi.append(cNewRoi)
 
                     mostProbableX, mostProbableY = GenerateNewTestPoint(xLast, yLast, nbrSize)
                     print("Iteration count = ", it)
